@@ -3,7 +3,7 @@ import torch.nn as nn
 from typing import Optional
 
 from .encoders import ImageEncoder, TextEncoder
-from .concepts_book import ConceptBook
+from .concepts_book import BagOfConcepts
 from .concept_encoder import MultiHeadAttention
 
 class MultimodalConceptMapper(nn.Module):
@@ -20,7 +20,7 @@ class MultimodalConceptMapper(nn.Module):
 
         self.image_encoder = ImageEncoder(model_name=image_model_name, target_hidden_size=target_hidden_size)
         self.text_encoder = TextEncoder(model_name=text_model_name, target_hidden_size=target_hidden_size)
-        self.bag_of_books = ConceptBook(num_concepts=num_concepts, concept_dim=concept_dim)
+        self.bag_of_concepts = BagOfConcepts(num_concepts=num_concepts, concept_dim=concept_dim)
 
         self.multi_head_attention = MultiHeadAttention(
             query_dim=concept_dim,
@@ -36,7 +36,7 @@ class MultimodalConceptMapper(nn.Module):
         # I think this can make the model more robust and make it less depedent on one modality
         kv_features = torch.cat((image_features, text_features), dim=1) # (batch, seq_len_img + seq_len_txt, target_hidden_size)
 
-        concept_embedding = self.bag_of_books(concept_ids)
+        concept_embedding = self.bag_of_concepts(concept_ids)
         query_input = concept_embedding.unsqueeze(1) # (batch, 1, concept_dim)
 
         attended_concept_representation = self.multi_head_attention(
