@@ -1,7 +1,7 @@
 import torch
 import torch.nn
 
-class ConceptBook(nn.Module):
+class BagOfConcepts(nn.Module):
     def __init__(self, num_concepts: int = 512, concept_dim: int = 512):
         super().__init__()
         # NOTE: Here I think we need to choose the num_concepts, concept carefully, like if we're training on FashionMnist with 10 labels,
