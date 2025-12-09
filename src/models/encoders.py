@@ -44,6 +44,7 @@ class TextEncoder(nn.Module):
             self.proj = nn.Linear(hidden_size, config.target_hidden_size)
 
     def forward(self, texts: torch.Tensor) -> torch.Tensor:
+        # WARNING: Here maybe the tokenizer won't return whole words as tokens so be careful
         encoded_input = self.tokenizer(texts, padding=True, truncation=True, return_tensors="pt")
         input_ids = encoded_input['input_ids']
         attention_mask = encoded_input['attention_mask']

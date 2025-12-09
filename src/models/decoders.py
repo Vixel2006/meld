@@ -6,174 +6,116 @@ from typing import Tuple, Optional, List
 from .transformer_blocks import *
 from ...configs.captioning_config import CaptioningConfig
 from ...configs.concept_to_image_vae_config import ConceptToImageVAEConfig
+import math
 
-class ConceptConditionedImageCaptioning(nn.Module):
-    def __init__(self, config: CaptioningConfig):
+class SlotImageDecoder(nn.Module):
+    def __init__(self, config: ImageDecoderConfig):
         super().__init__()
-
-        self.transformer_decoder = TransformerDecoder(
-            vocab_size=config.vocab_size,
-            encoder_output_size=config.concept_dim,
-            attention_heads=config.attention_heads,
-            linear_units=config.linear_units,
-            num_blocks=config.num_blocks,
-            dropout_rate=config.dropout_rate,
-            positional_dropout_rate=config.positional_dropout_rate,
-            self_attention_dropout_rate=config.self_attention_dropout_rate,
-            src_attention_dropout_rate=config.src_attention_dropout_rate,
-            input_layer="embed",
-            use_output_layer=config.use_output_layer,
-            pos_enc_class=PositionalEncoding,
-            normalize_before=config.normalize_before,
-            concat_after=config.concat_after,
-        )
-        self.ignore_id = config.ignore_id
-
-    def forward(
-        self,
-        concepts: torch.Tensor, # (batch_size, concept_dim)
-        captions_input_ids: torch.Tensor, # (batch_size, max_caption_length)
-        captions_lengths: torch.Tensor, # (batch_size,)
-    ) -> torch.Tensor:
-        batch_size = concepts.size(0)
-        device = concepts.device
-
-        # Reshape concept_vector to be a sequence of length 1 for the decoder's 'memory'
-        # (batch_size, 1, concept_dim)
-        decoder_memory = concepts.unsqueeze(1)
-        memory_mask = torch.ones(batch_size, 1, 1, dtype=torch.bool, device=device) # Mask for the single concept token
-
-        logits, _, _ = self.transformer_decoder(
-            memory=decoder_memory,
-            memory_mask=memory_mask,
-            ys_in_pad=captions_input_ids,
-            ys_in_lens=captions_lengths
-        )
-        return logits
-
-    def generate_caption(
-        self,
-        concept_vector: torch.Tensor, # (1, concept_dim) for single inference
-        max_len: int = 50,
-        start_token_id: int = 1,
-        end_token_id: int = 2,
-    ) -> List[int]:
-        self.eval()
-        with torch.no_grad():
-            batch_size = concept_vector.size(0)
-            device = concept_vector.device
-
-            # Reshape concept_vector to be a sequence of length 1 for the decoder's 'memory'
-            # (batch_size, 1, concept_dim)
-            decoder_memory = concept_vector.unsqueeze(1)
-            memory_mask = torch.ones(batch_size, 1, 1, dtype=torch.bool, device=device) # Mask for the single concept token
-
-            # Start with the start token
-            generated_tokens = torch.tensor([[start_token_id]], device=device) # (batch_size, 1)
-
-            for _ in range(max_len - 1): # -1 because we already have the start token
-                # Create a mask for the target sequence (look-ahead mask)
-                tgt_mask = subsequent_mask(generated_tokens.size(1)).unsqueeze(0).to(device)
-
-                logits, _ = self.transformer_decoder.forward_one_step(
-                    tgt=generated_tokens,
-                    memory=decoder_memory,
-                    tgt_mask=tgt_mask,
-                    memory_mask=memory_mask
-                )
-                
-                # Get the next token (greedy decoding)
-                next_token_id = logits.argmax(dim=-1) # (batch_size,)
-                generated_tokens = torch.cat([generated_tokens, next_token_id.unsqueeze(1)], dim=1)
-
-                if next_token_id.item() == end_token_id: # Assuming batch_size is 1 for inference
-                    break
+        self.config = config
+        
+        # Calculate initial size
+        self.initial_dim = config.image_size // (2 ** (config.num_decoder_layers - 1))
+        
+        # Input: One single concept vector
+        self.fc = nn.Linear(config.input_dim, config.hidden_dim * self.initial_dim * self.initial_dim)
+        
+        layers = []
+        in_channels = config.hidden_dim
+        
+        for i in range(config.num_decoder_layers):
+            # Last layer outputs 4 channels: 3 for RGB, 1 for Alpha Mask
+            is_last = (i == config.num_decoder_layers - 1)
+            out_channels = 4 if is_last else in_channels // 2
             
-            return generated_tokens.squeeze(0).tolist() # Convert to list of token IDs
-
-class ConceptToImageVAE(nn.Module):
-    def __init__(self, config: ConceptToImageVAEConfig = ConceptToImageVAEConfig()):
-        super().__init__()
-
-        if config.hidden_dims is None:
-            hidden_dims = [512, 256, 128, 64] # Example hidden dimensions for upsampling
-        else:
-            hidden_dims = config.hidden_dims
-
-        self.image_size = config.image_size
-        self.num_upsampling_layers = len(hidden_dims) # Number of ConvTranspose2d layers
-
-        # Calculate the initial spatial dimension (e.g., 4x4 for 64x64 image with 4 upsampling layers)
-        self.initial_spatial_dim = self.image_size // (2 ** self.num_upsampling_layers)
-        
-        # Initial linear layer to project concept_dim to a flattened spatial representation
-        self.fc = nn.Linear(config.concept_dim, hidden_dims[0] * (self.initial_spatial_dim ** 2))
-
-        # Build convolutional transpose layers for upsampling
-        modules = []
-        in_channels = hidden_dims[0]
-        
-        for h_dim in hidden_dims[1:]:
-            modules.append(
-                nn.Sequential(
-                    nn.ConvTranspose2d(in_channels, h_dim, kernel_size=4, stride=2, padding=1),
-                    nn.BatchNorm2d(h_dim),
-                    nn.LeakyReLU()
+            layers.append(
+                nn.ConvTranspose2d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=4, stride=2, padding=1
                 )
             )
-            in_channels = h_dim
+            if not is_last:
+                layers.append(nn.ReLU())
+            
+            in_channels = out_channels
+            
+        self.decoder = nn.Sequential(*layers)
 
-        self.decoder_blocks = nn.Sequential(*modules)
-
-        # Final convolutional layer to output the image
-        self.final_layer = nn.Sequential(
-            nn.ConvTranspose2d(in_channels, config.output_channels, kernel_size=4, stride=2, padding=1),
-            nn.Tanh() # Output images in [-1, 1] range
-        )
-
-    def forward(self, z: torch.Tensor) -> torch.Tensor:
-        # Project and reshape to initial spatial dimensions
-        x = self.fc(z)
-        x = x.view(-1, self.decoder_blocks[0][0].in_channels, self.initial_spatial_dim, self.initial_spatial_dim)
+    def forward(self, concepts: torch.Tensor) -> torch.Tensor:
+        # Input concepts: (Batch_Size, Num_Slots, Input_Dim)
+        B, N, D = concepts.shape
         
-        x = self.decoder_blocks(x)
-        x = self.final_layer(x)
-        return x
+        # 1. FLATTEN: Treat every slot as an independent sample
+        # Shape becomes: (Batch_Size * Num_Slots, Input_Dim)
+        flat_concepts = concepts.reshape(B * N, D)
+        
+        # 2. Decode features
+        x = self.fc(flat_concepts)
+        x = x.view(B * N, self.config.hidden_dim, self.initial_dim, self.initial_dim)
+        x = self.decoder(x) # Output: (B*N, 4, H, W)
+        
+        # 3. UNFLATTEN: Separate back into batches and slots
+        H, W = x.shape[2], x.shape[3]
+        x = x.view(B, N, 4, H, W)
+        
+        # 4. Split RGB and Alpha
+        rgb = x[:, :, :3, :, :]   # (B, N, 3, H, W)
+        alpha = x[:, :, 3:4, :, :] # (B, N, 1, H, W)
+        
+        # 5. Recombine (Composition)
+        # We enforce alpha to sum to 1 across slots using Softmax
+        alpha = F.softmax(alpha, dim=1)
 
-class ImageGenerationDecoder(nn.Module):
-    def __init__(
-        self,
-        config: ConceptToImageVAEConfig = ConceptToImageVAEConfig()
-    ):
+        # Final Image = Sum(RGB * Alpha)
+        recon_image = torch.sum(rgb * alpha, dim=1) # (B, 3, H, W)
+        
+        return recon_image, alpha # Return alpha for visualization!
+
+class SlotTextDecoderGRU(nn.Module):
+    def __init__(self, config: TextDecoderConfig):
         super().__init__()
-        self.vae_decoder = ConceptToImageVAE(
-            config=config
-        )
-
-    def forward(self, concepts: torch.Tensor) -> List[Image.Image]:
-        if not isinstance(concepts, torch.Tensor) or concepts.dim() != 2:
-            raise ValueError("Input 'concepts' must be a 2D torch.Tensor (batch_size, concept_dim).")
-
-        # Generate image tensor from concepts
-        image_tensor = self.vae_decoder(concepts) # (batch_size, channels, height, width)
-
-        # Convert tensor to PIL Images
-        # Denormalize from [-1, 1] to [0, 255]
-        image_tensor = (image_tensor + 1) / 2
-        image_tensor = (image_tensor * 255).byte()
-
-        pil_images = []
-        for i in range(image_tensor.size(0)):
-            # Permute from (C, H, W) to (H, W, C) for PIL
-            img_np = image_tensor[i].permute(1, 2, 0).cpu().numpy()
-            pil_images.append(Image.fromarray(img_np))
+        self.config = config
+        self.embedding = nn.Embedding(config.vocab_size, config.hidden_dim)
+        self.gru = nn.GRU(config.hidden_dim, config.hidden_dim, num_layers=config.num_decoder_layers, batch_first=True)
+        self.fc_out = nn.Linear(config.hidden_dim, config.vocab_size)
         
-        return pil_images
+        # Project combined concepts to hidden state
+        self.concept_to_hidden = nn.Linear(config.input_dim, config.hidden_dim * config.num_decoder_layers)
 
-    def generate_image(self, concept_vector: torch.Tensor) -> Image.Image:
-        if not isinstance(concept_vector, torch.Tensor) or concept_vector.dim() != 2 or concept_vector.size(0) != 1:
-            raise ValueError("Input 'concept_vector' must be a 2D torch.Tensor of shape (1, concept_dim).")
+    def forward(self, concepts: torch.Tensor, target_sequence=None):
+        # concepts: (Batch, Num_Slots, Dim)
+        B, N, D = concepts.shape
         
-        # Call the forward method with a batch containing the single concept vector
-        images = self.forward(concept_vector)
-        return images[0]
+        global_context = torch.mean(concepts, dim=1) # (Batch, Dim)
+        
+        # Now proceed as normal
+        h_0 = self.concept_to_hidden(global_context)
+        h_0 = h_0.view(self.config.num_decoder_layers, B, self.config.hidden_dim)
+
+
+        if target_sequence is not None:
+            # Teacher forcing during training
+            embedded = self.embedding(target_sequence) # (batch_size, seq_len, hidden_dim)
+            output, _ = self.gru(embedded, h_0) # output: (batch_size, seq_len, hidden_dim)
+            logits = self.fc_out(output) # (batch_size, seq_len, vocab_size)
+            return logits
+        else:
+            # Inference mode: generate sequence token by token
+            # Start with a special <SOS> token (assuming token 0 is <SOS>)
+            input_token = torch.zeros((batch_size, 1), dtype=torch.long, device=concepts.device)
+            
+            outputs = []
+            hidden = h_0
+            
+            for _ in range(self.config.max_seq_len):
+                embedded = self.embedding(input_token) # (batch_size, 1, hidden_dim)
+                output, hidden = self.gru(embedded, hidden) # output: (batch_size, 1, hidden_dim)
+                logits = self.fc_out(output.squeeze(1)) # (batch_size, vocab_size)
+                
+                outputs.append(logits)
+                
+                # Get the next input token (greedy sampling)
+                input_token = logits.argmax(1).unsqueeze(1)
+
+            
+            return torch.stack(outputs, dim=1) # (batch_size, max_seq_len, vocab_size)

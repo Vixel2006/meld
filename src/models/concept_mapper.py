@@ -18,9 +18,10 @@ class ConceptMapper(nn.Module):
         elif self.modality == "image":
             self.encoder = ImageEncoder(config.image_encoder_config)
 
+        # NOTE: maybe if we found some problems in the text mapping we can add a standard attention
+        # and use it for the text encoded tensors.
         self.slot_attn = SlotAttention(config.slot_dim, config.num_iter, config.num_slots)
 
-        self.boc = BagOfConcepts(config.boc_config)
 
     def forward(self, images: torch.Tensor = None, text: list[str] = None) -> torch.Tensor:
         # Make sure that the mapper gets the right input modality
@@ -34,7 +35,5 @@ class ConceptMapper(nn.Module):
 
         concept_slots = self.slot_attn(features)
 
-        concepts = self.boc(concept_slots)
-
-        return concepts
+        return concept_slots
 
