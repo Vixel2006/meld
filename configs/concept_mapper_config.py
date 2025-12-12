@@ -13,4 +13,4 @@ class ConceptMapperConfig:
     multi_head_attention_dropout_rate: float = 0.3
     num_iters: int = 3
     num_slots: int = 10
-    slot_dims: int = 512
+    slot_dim: int = 512
