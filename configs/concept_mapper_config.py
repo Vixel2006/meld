@@ -11,3 +11,4 @@ class ConceptMapperConfig:
     bag_of_concepts_config: BagOfConceptsConfig = field(default_factory=BagOfConceptsConfig)
     num_attention_heads: int = 4
     multi_head_attention_dropout_rate: float = 0.3
+    num_slot_iterations: int = 3
