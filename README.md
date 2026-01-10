@@ -43,7 +43,7 @@ We present Bag of Concepts (BoC), a multimodal architecture that learns a discre
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/BoC.git
+git clone https://github.com/Vixel2006/BoC.git
 cd BoC
 
 # Run automated setup
@@ -59,7 +59,7 @@ python scripts/download_datasets.py --dataset flickr30k --output-dir ./data
 
 ```bash
 # Clone repository
-git clone https://github.com/yourusername/BoC.git
+git clone https://github.com/Vixel2006/BoC.git
 cd BoC
 
 # Create virtual environment

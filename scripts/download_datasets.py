@@ -9,13 +9,20 @@ Usage:
     python scripts/download_datasets.py --all --output-dir ./data
 """
 
+import sys
+from pathlib import Path
+
+# Add project root to sys.path to allow imports from src
+root_dir = Path(__file__).resolve().parent.parent
+if str(root_dir) not in sys.path:
+    sys.path.append(str(root_dir))
+
 import argparse
 import os
 import urllib.request
 import zipfile
 import tarfile
 import json
-from pathlib import Path
 from tqdm import tqdm
 import shutil
 from src.data import verify_dataset
