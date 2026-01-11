@@ -1,5 +1,3 @@
-"""Data loading utilities for Flickr30k and MS COCO datasets."""
-
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -54,7 +52,7 @@ class Flickr30kDataset:
     
     def __init__(self, config: DataConfig):
         self.config = config
-        self.data_root = Path(config.data_root)
+        self.data_root = Path(config.data_root) / "flickr30k"
         self.image_dir = self.data_root / "flickr30k_images"
         self.annotation_file = self.data_root / "flickr30k_annotations" / f"{config.split}.json"
         
@@ -114,7 +112,7 @@ class COCODataset:
     
     def __init__(self, config: DataConfig):
         self.config = config
-        self.data_root = Path(config.data_root)
+        self.data_root = Path(config.data_root) / "coco"
         
         # Determine split directory
         if config.split == 'train':

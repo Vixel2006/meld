@@ -1,14 +1,3 @@
-"""
-Dataset download and setup script for Flickr30k and MS COCO.
-
-This script automates the download and preparation of datasets for training.
-
-Usage:
-    python scripts/download_datasets.py --dataset flickr30k --output-dir ./data
-    python scripts/download_datasets.py --dataset coco --output-dir ./data
-    python scripts/download_datasets.py --all --output-dir ./data
-"""
-
 import sys
 from pathlib import Path
 
