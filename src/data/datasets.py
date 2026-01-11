@@ -60,20 +60,33 @@ class Flickr30kDataset:
         with open(self.annotation_file, 'r') as f:
             self.annotations = json.load(f)
         
-        # Create image-caption pairs (each image has 5 captions)
+        # Create image-caption pairs
         self.samples = []
         for ann in self.annotations:
-            # Map keys from real JSON format:
-            # "image" -> image_id (filename)
-            # "caption" -> captions list
-            image_rel_path = ann.get('image', '')
-            image_id = image_rel_path.split('/')[-1] if '/' in image_rel_path else image_rel_path
-            captions = ann.get('caption', [])
+            # Handle different JSON formats:
+            # 1. Real GCS format: {"image": "...", "caption": "string", "image_id": float}
+            # 2. Template format: {"image_id": "...", "captions": ["...", "..."]}
             
-            if not image_id or not captions:
+            # Get image ID / path
+            image_rel_path = ann.get('image', ann.get('image_id', ''))
+            if not image_rel_path:
                 continue
                 
+            # Extract filename if it's a path
+            image_id = str(image_rel_path).split('/')[-1] if '/' in str(image_rel_path) else str(image_rel_path)
             image_path = self.image_dir / image_id
+            
+            # Get captions (can be a string or a list)
+            caption_data = ann.get('caption', ann.get('captions', []))
+            
+            if isinstance(caption_data, str):
+                captions = [caption_data]
+            else:
+                captions = caption_data
+                
+            if not captions:
+                continue
+                
             for caption in captions:
                 self.samples.append({
                     'image_path': str(image_path),
@@ -81,7 +94,12 @@ class Flickr30kDataset:
                     'image_id': image_id
                 })
         
-        print(f"Loaded Flickr30k {config.split}: {len(self.samples)} image-caption pairs")
+        if len(self.samples) == 0:
+            print(f"⚠️ Warning: Loaded 0 samples for Flickr30k {config.split}")
+            if len(self.annotations) > 0:
+                print(f"First annotation entry: {self.annotations[0]}")
+        else:
+            print(f"Loaded Flickr30k {config.split}: {len(self.samples)} image-caption pairs")
     
     def __len__(self) -> int:
         return len(self.samples)
